@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Markmap 知识库管理系统</title>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+    <script src="https://cdn.jsdelivr.net/npm/markmap-view@0.15.4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/markmap-lib@0.15.4/dist/browser/index.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/markmap-toolbar@0.15.4/dist/index.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    
+    <style>
+        :root {
+            --sidebar-bg: #f7f9fc;
+            --sidebar-width: 280px;
+            --primary-color: #3b82f6;
+            --text-color: #334155;
+            --border-color: #e2e8f0;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; height: 100vh; display: flex; overflow: hidden; color: var(--text-color); }
+
+        /* 布局 */
+        #app { display: flex; width: 100%; height: 100%; }
+        
+        /* 侧边栏 */
+        #sidebar {
+            width: var(--sidebar-width);
+            background: var(--sidebar-bg);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            transition: transform 0.3s ease;
+        }
+        
+        .sidebar-header { padding: 15px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; background: #fff; }
+        .sidebar-title { font-weight: bold; color: var(--primary-color); }
+        .sidebar-actions button { border: none; background: none; cursor: pointer; color: #64748b; margin-left: 8px; font-size: 14px; }
+        .sidebar-actions button:hover { color: var(--primary-color); }
+
+        #file-tree { flex: 1; overflow-y: auto; padding: 10px; }
+        
+        /* 树形结构样式 */
+        .tree-item { padding: 4px 0; cursor: pointer; user-select: none; font-size: 14px; }
+        .tree-content { display: flex; align-items: center; padding: 6px 8px; border-radius: 6px; transition: background 0.2s; }
+        .tree-content:hover { background: #e2e8f0; }
+        .tree-content.active { background: #dbeafe; color: var(--primary-color); font-weight: 500; }
+        .tree-content i { margin-right: 8px; width: 16px; text-align: center; }
+        .fa-folder { color: #f59e0b; }
+        .fa-file-markdown { color: #3b82f6; }
+        .tree-children { margin-left: 18px; border-left: 1px solid #cbd5e1; padding-left: 4px; display: none; }
+        .tree-item.expanded > .tree-children { display: block; }
+        .tree-item.expanded > .tree-content .fa-caret-right { transform: rotate(90deg); }
+        .caret-icon { color: #94a3b8; font-size: 10px; transition: transform 0.2s; }
+        .invisible { visibility: hidden; }
+
+        /* 右侧主区域 */
+        #main-area { flex: 1; display: flex; flex-direction: column; position: relative; }
+        
+        /* 顶部工具栏 */
+        #toolbar {
+            height: 50px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            background: #fff;
+            justify-content: space-between;
+        }
+        .btn {
+            padding: 6px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            background: #fff;
+            cursor: pointer;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+        }
+        .btn:hover { background: #f1f5f9; border-color: #cbd5e1; }
+        .btn-primary { background: var(--primary-color); color: white; border: none; }
+        .btn-primary:hover { background: #2563eb; }
+
+        /* 工作区：编辑器 + 脑图 */
+        #workspace { flex: 1; display: flex; position: relative; }
+        
+        #editor-container {
+            width: 40%;
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            background: #fff;
+            transition: width 0.3s ease;
+        }
+        textarea {
+            flex: 1;
+            border: none;
+            resize: none;
+            padding: 20px;
+            font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.6;
+            outline: none;
+            color: #333;
+        }
+        
+        #markmap-container { flex: 1; position: relative; background: #fff; overflow: hidden; }
+        svg { width: 100%; height: 100%; }
+
+        /* 全屏模式样式 */
+        body.fullscreen #sidebar { margin-left: calc(-1 * var(--sidebar-width)); }
+        body.fullscreen #editor-container { width: 0; overflow: hidden; border: none; }
+        body.fullscreen textarea { padding: 0; }
+
+        /* 模态框 */
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); justify-content: center; align-items: center; z-index: 1000; }
+        .modal-content { background: white; padding: 20px; border-radius: 8px; width: 300px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
+        .modal-header { font-weight: bold; margin-bottom: 15px; font-size: 16px; }
+        .modal input { width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px; margin-bottom: 15px; }
+        .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
+
+    </style>
+</head>
+<body>
+
+<div id="app">
+    <div id="sidebar">
+        <div class="sidebar-header">
+            <span class="sidebar-title"><i class="fas fa-brain"></i> 知识库</span>
+            <div class="sidebar-actions">
+                <button title="新建文件夹" onclick="ui.promptNewItem('folder')"><i class="fas fa-folder-plus"></i></button>
+                <button title="新建文件" onclick="ui.promptNewItem('file')"><i class="fas fa-file-medical"></i></button>
+                <button title="删除选中" onclick="fileSystem.deleteCurrent()"><i class="fas fa-trash"></i></button>
+            </div>
+        </div>
+        <div id="file-tree"></div>
+        <div style="padding: 10px; border-top: 1px solid #e2e8f0; text-align: center;">
+            <input type="file" id="importInput" style="display:none" onchange="dataManager.importData(this)">
+            <button class="btn" style="width:100%; justify-content: center;" onclick="document.getElementById('importInput').click()">
+                <i class="fas fa-file-import"></i> 导入备份
+            </button>
+            <button class="btn" style="width:100%; justify-content: center; margin-top: 5px;" onclick="dataManager.exportData()">
+                <i class="fas fa-file-export"></i> 导出备份
+            </button>
+        </div>
+    </div>
+
+    <div id="main-area">
+        <div id="toolbar">
+            <div style="font-weight: bold;" id="current-filename">未选择文件</div>
+            <div style="display: flex; gap: 10px;">
+                <button class="btn" onclick="ui.toggleFullscreen()" title="全屏查看脑图">
+                    <i class="fas fa-expand"></i> 全屏演示
+                </button>
+            </div>
+        </div>
+        <div id="workspace">
+            <div id="editor-container">
+                <textarea id="editor" placeholder="在此输入 Markdown 内容... 例如：&#10;# 核心主题&#10;## 分支1&#10;- 知识点A&#10;- 知识点B"></textarea>
+            </div>
+            <div id="markmap-container">
+                <svg id="mindmap"></svg>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="modal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header" id="modal-title">新建</div>
+        <input type="text" id="modal-input" placeholder="请输入名称">
+        <div class="modal-actions">
+            <button class="btn" onclick="ui.closeModal()">取消</button>
+            <button class="btn btn-primary" id="modal-confirm">确定</button>
+        </div>
+    </div>
+</div>
+
+<script>
+/**
+ * 核心逻辑：数据结构与状态管理
+ */
+const transformer = new markmap.Transformer();
+const { Markmap, loadCSS, loadJS } = markmap;
+
+// 全局状态
+const state = {
+    data: [], // 文件树数据
+    activeFileId: null, // 当前选中的文件ID
+    fullscreen: false,
+    selectedId: null, // 在树中高亮的ID (可能是文件夹)
+    idCounter: Date.now()
+};
+
+// 工具类：生成唯一ID
+const generateId = () => 'id_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+
+// 默认数据
+const defaultData = [
+    {
+        id: 'root_folder',
+        type: 'folder',
+        name: '考研政治',
+        expanded: true,
+        children: [
+            {
+                id: 'demo_file',
+                type: 'file',
+                name: '马原第一章',
+                content: '# 马克思主义基本原理\n\n## 物质世界\n- 物质\n- 意识\n\n## 辩证法\n- 联系\n- 发展'
+            }
+        ]
+    }
+];
+
+// 文件系统逻辑
+const fileSystem = {
+    init() {
+        const saved = localStorage.getItem('markmap_db');
+        state.data = saved ? JSON.parse(saved) : defaultData;
+        this.renderTree();
+    },
+
+    save() {
+        localStorage.setItem('markmap_db', JSON.stringify(state.data));
+    },
+
+    findItem(id, list = state.data) {
+        for (let item of list) {
+            if (item.id === id) return item;
+            if (item.children) {
+                const found = this.findItem(id, item.children);
+                if (found) return found;
+            }
+        }
+        return null;
+    },
+
+    // 添加新项
+    addItem(type, name) {
+        const newItem = {
+            id: generateId(),
+            type: type,
+            name: name,
+            ...(type === 'folder' ? { children: [], expanded: true } : { content: '# ' + name })
+        };
+
+        // 如果当前选中了文件夹，则添加到该文件夹下；否则添加到根目录
+        let targetList = state.data;
+        if (state.selectedId) {
+            const selectedItem = this.findItem(state.selectedId);
+            if (selectedItem && selectedItem.type === 'folder') {
+                targetList = selectedItem.children;
+                selectedItem.expanded = true;
+            } else {
+                // 如果选中是文件，找到其父级（简化处理：暂添加到根目录或需遍历父级）
+                // 为简化交互，简单模式下如果选中文件，则添加同级有点复杂，这里默认添加到根目录
+            }
+        }
+        
+        targetList.push(newItem);
+        this.save();
+        this.renderTree();
+        if (type === 'file') this.selectFile(newItem.id);
+    },
+
+    deleteCurrent() {
+        if (!state.selectedId) return alert('请先选择一个文件或文件夹');
+        if (!confirm('确定要删除吗？删除文件夹将清空其内部所有内容。')) return;
+
+        const deleteRecursive = (list) => {
+            const index = list.findIndex(i => i.id === state.selectedId);
+            if (index !== -1) {
+                list.splice(index, 1);
+                return true;
+            }
+            for (let item of list) {
+                if (item.children && deleteRecursive(item.children)) return true;
+            }
+            return false;
+        };
+
+        deleteRecursive(state.data);
+        if (state.activeFileId === state.selectedId) {
+            state.activeFileId = null;
+            document.getElementById('editor').value = '';
+            document.getElementById('current-filename').innerText = '未选择文件';
+            renderMap('');
+        }
+        state.selectedId = null;
+        this.save();
+        this.renderTree();
+    },
+
+    selectFile(id) {
+        const item = this.findItem(id);
+        if (!item || item.type !== 'file') return;
+
+        state.activeFileId = id;
+        state.selectedId = id;
+        document.getElementById('current-filename').innerText = item.name;
+        document.getElementById('editor').value = item.content;
+        renderMap(item.content);
+        this.renderTree(); // 更新高亮
+    },
+
+    toggleFolder(id) {
+        const item = this.findItem(id);
+        if (item && item.type === 'folder') {
+            item.expanded = !item.expanded;
+            state.selectedId = id;
+            this.save();
+            this.renderTree();
+        }
+    },
+
+    updateFileContent(content) {
+        if (!state.activeFileId) return;
+        const item = this.findItem(state.activeFileId);
+        if (item) {
+            item.content = content;
+            this.save();
+        }
+    },
+
+    renderTree() {
+        const container = document.getElementById('file-tree');
+        container.innerHTML = '';
+        
+        const createNode = (item, level = 0) => {
+            const div = document.createElement('div');
+            div.className = `tree-item ${item.expanded ? 'expanded' : ''}`;
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = `tree-content ${state.selectedId === item.id ? 'active' : ''}`;
+            contentDiv.style.paddingLeft = (level * 15 + 8) + 'px';
+            
+            // 箭头图标
+            const caret = document.createElement('i');
+            caret.className = `fas fa-caret-right caret-icon ${item.type === 'folder' ? '' : 'invisible'}`;
+            contentDiv.appendChild(caret);
+
+            // 类型图标
+            const icon = document.createElement('i');
+            icon.className = item.type === 'folder' ? 'fas fa-folder' : 'fas fa-file-markdown';
+            contentDiv.appendChild(icon);
+
+            // 文本
+            const span = document.createElement('span');
+            span.innerText = item.name;
+            contentDiv.appendChild(span);
+
+            // 点击事件
+            contentDiv.onclick = (e) => {
+                e.stopPropagation();
+                if (item.type === 'folder') {
+                    this.toggleFolder(item.id);
+                } else {
+                    this.selectFile(item.id);
+                }
+            };
+
+            div.appendChild(contentDiv);
+
+            if (item.children && item.children.length > 0) {
+                const childrenDiv = document.createElement('div');
+                childrenDiv.className = 'tree-children';
+                item.children.forEach(child => {
+                    childrenDiv.appendChild(createNode(child, level + 1));
+                });
+                div.appendChild(childrenDiv);
+            }
+
+            return div;
+        };
+
+        state.data.forEach(item => {
+            container.appendChild(createNode(item));
+        });
+    }
+};
+
+// Markmap 渲染逻辑
+let mm;
+function initMarkmap() {
+    mm = Markmap.create('#mindmap', null, {});
+}
+
+function renderMap(markdown) {
+    const { root } = transformer.transform(markdown);
+    mm.setData(root);
+    mm.fit();
+}
+
+// 界面交互逻辑
+const ui = {
+    toggleFullscreen() {
+        document.body.classList.toggle('fullscreen');
+        state.fullscreen = !state.fullscreen;
+        setTimeout(() => mm.fit(), 300); // 重新适应大小
+    },
+    
+    promptNewItem(type) {
+        const modal = document.getElementById('modal');
+        const input = document.getElementById('modal-input');
+        const title = document.getElementById('modal-title');
+        const confirmBtn = document.getElementById('modal-confirm');
+        
+        title.innerText = type === 'folder' ? '新建文件夹' : '新建文件';
+        input.value = '';
+        modal.style.display = 'flex';
+        input.focus();
+
+        // 清除旧事件
+        const newBtn = confirmBtn.cloneNode(true);
+        confirmBtn.parentNode.replaceChild(newBtn, confirmBtn);
+
+        newBtn.onclick = () => {
+            const name = input.value.trim();
+            if (name) {
+                fileSystem.addItem(type, name);
+                this.closeModal();
+            }
+        };
+        
+        // 回车提交
+        input.onkeydown = (e) => { if(e.key === 'Enter') newBtn.click(); }
+    },
+
+    closeModal() {
+        document.getElementById('modal').style.display = 'none';
+    }
+};
+
+// 数据导入导出
+const dataManager = {
+    exportData() {
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state.data));
+        const downloadAnchorNode = document.createElement('a');
+        downloadAnchorNode.setAttribute("href", dataStr);
+        downloadAnchorNode.setAttribute("download", "markmap_backup_" + new Date().toISOString().slice(0,10) + ".json");
+        document.body.appendChild(downloadAnchorNode);
+        downloadAnchorNode.click();
+        downloadAnchorNode.remove();
+    },
+
+    importData(input) {
+        const file = input.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const json = JSON.parse(e.target.result);
+                if (confirm('导入将覆盖当前所有数据，确定继续吗？')) {
+                    state.data = json;
+                    fileSystem.save();
+                    fileSystem.renderTree();
+                    alert('导入成功！');
+                }
+            } catch (err) {
+                alert('文件格式错误');
+            }
+        };
+        reader.readAsText(file);
+        // Reset input
+        input.value = ''; 
+    }
+};
+
+// 初始化
+window.onload = () => {
+    initMarkmap();
+    fileSystem.init();
+
+    // 监听编辑器输入
+    const editor = document.getElementById('editor');
+    editor.addEventListener('input', (e) => {
+        fileSystem.updateFileContent(e.target.value);
+        renderMap(e.target.value);
+    });
+
+    // 自动加载第一个文件（如果有）
+    if (defaultData[0].children && defaultData[0].children[0]) {
+        // Optional: Auto select first file
+    }
+};
+
+</script>
+</body>
+</html>
